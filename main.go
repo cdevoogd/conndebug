@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"os"
 
 	"github.com/cdevoogd/conndebug/internal/command"
@@ -13,12 +13,13 @@ func main() {
 	root := &cli.Command{
 		Usage: "small utilities for testing and debugging network connections",
 		Commands: []*cli.Command{
+			command.HTTPTrace,
 			command.Reachable,
 		},
 	}
 
 	if err := root.Run(context.Background(), os.Args); err != nil {
-		slog.Error(err.Error())
+		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 }
