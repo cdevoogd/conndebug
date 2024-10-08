@@ -13,6 +13,7 @@ func main() {
 	root := &cli.Command{
 		Usage: "small utilities for testing and debugging network connections",
 		Commands: []*cli.Command{
+			command.HTTP,
 			command.HTTPTrace,
 			command.Reachable,
 		},
