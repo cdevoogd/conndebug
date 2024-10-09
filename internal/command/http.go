@@ -6,14 +6,16 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 const headerDelimiter = ":"
 
 type HTTP struct {
-	URL     string   `arg:"" name:"url" help:"The URL to send a request to"`
-	Method  string   `name:"method" short:"M" default:"GET" enum:"${http_methods}"`
-	Headers []string `name:"header" short:"H" help:"The header(s) to add to the request" placeholder:"'Header: Value'" sep:"none"`
+	URL     string        `arg:"" name:"url" help:"The URL to send a request to"`
+	Method  string        `name:"method" short:"M" default:"GET" enum:"${http_methods}"`
+	Headers []string      `name:"header" short:"H" help:"The header(s) to add to the request" placeholder:"'Header: Value'" sep:"none"`
+	Timeout time.Duration `name:"timeout" short:"t" default:"0" help:"The max amount of time the request can take. A value of 0 means no timeout."`
 
 	headers http.Header
 }
@@ -37,7 +39,8 @@ func (cmd *HTTP) Run() error {
 		return fmt.Errorf("error building request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: cmd.Timeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("error sending request: %w", err)
 	}
