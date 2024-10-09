@@ -1,34 +1,18 @@
 package command
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
 	"time"
-
-	"github.com/urfave/cli/v3"
 )
 
-var HTTPTrace = &cli.Command{
-	Name:      "httptrace",
-	Usage:     "trace an HTTP(S) connection using GET",
-	Action:    runHTTPTrace,
-	ArgsUsage: "url",
+type HTTPTrace struct {
+	URL string `arg:"" name:"url" help:"the URL to send a request to"`
 }
 
-func runHTTPTrace(ctx context.Context, cmd *cli.Command) error {
-	numArgs := cmd.Args().Len()
-	if numArgs > 1 {
-		return fmt.Errorf("expected a single argument, but received %d", numArgs)
-	}
-
-	if numArgs == 0 {
-		return fmt.Errorf("a URL was not provided")
-	}
-	url := cmd.Args().Get(0)
-
+func (cmd *HTTPTrace) Run() error {
 	start := time.Now()
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(info httptrace.DNSStartInfo) {
@@ -65,7 +49,7 @@ func runHTTPTrace(ctx context.Context, cmd *cli.Command) error {
 		},
 	}
 
-	req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
+	req, err := http.NewRequest(http.MethodGet, cmd.URL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("error building request: %w", err)
 	}

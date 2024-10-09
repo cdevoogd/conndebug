@@ -1,41 +1,28 @@
 package command
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
-
-	"github.com/urfave/cli/v3"
 )
 
-var Reachable = &cli.Command{
-	Name:      "reachable",
-	Usage:     "attempt to connect and immediately close a connection to test if an address is reachable",
-	Action:    checkReachable,
-	ArgsUsage: "ip:port",
+type Reachable struct {
+	Address string `arg:"" name:"ip:port" help:"the address to connect to"`
 }
 
-func checkReachable(ctx context.Context, cmd *cli.Command) error {
-	numArgs := cmd.Args().Len()
-	if numArgs > 1 {
-		return fmt.Errorf("expected a single argument, but received %d", numArgs)
-	}
-
-	if numArgs == 0 {
-		return fmt.Errorf("an address was not provided")
-	}
-
-	rawAddress := cmd.Args().Get(0)
-	err := validateAddress(rawAddress)
+func (cmd *Reachable) AfterApply() error {
+	err := validateAddress(cmd.Address)
 	if err != nil {
 		return fmt.Errorf("the provided address is invalid: %w", err)
 	}
+	return nil
+}
 
-	fmt.Printf("Connecting to: %s\n", rawAddress)
+func (cmd *Reachable) Run() error {
+	fmt.Printf("Connecting to: %s\n", cmd.Address)
 
 	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", rawAddress)
+	conn, err := dialer.Dial("tcp", cmd.Address)
 	if err != nil {
 		return fmt.Errorf("error dialing address: %w", err)
 	}
