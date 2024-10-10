@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +31,21 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVarP(&cmd.Method, "method", "m", "GET", "The HTTP method to send the request with")
 	flags.StringSliceVarP(&cmd.Headers, "header", "H", nil, "The header(s) to add to the request")
 	flags.DurationVarP(&cmd.Timeout, "timeout", "t", 0, "The max amount of time the request can take. A value of 0 means no timeout.")
+	flags.BoolVar(&cmd.Insecure, "insecure", false, "Skip TLS server verification")
+	flags.StringVar(&cmd.ServerName, "server-name", "", "Override the server name used to verify the server's certificate")
+	flags.StringVar(&cmd.RootCertificate, "root-cert", "", "Path to a PEM-encoded CA root certificate to trust")
+	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
+	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
+
+	fileFlags := []string{"root-cert", "cert", "key"}
+	for _, ff := range fileFlags {
+		err := cobraCmd.MarkFlagFilename(ff)
+		if err != nil {
+			// This fails if a flag name is passed that doesn't exist
+			panic(fmt.Sprintf("Failed to mark flag %q as a filename", ff))
+		}
+	}
+	cobraCmd.MarkFlagsRequiredTogether("cert", "key")
 
 	return cobraCmd
 }
@@ -38,6 +55,12 @@ type httpCommand struct {
 	Method  string
 	Headers []string
 	Timeout time.Duration
+
+	Insecure          bool
+	ServerName        string
+	RootCertificate   string
+	ClientCertificate string
+	ClientKey         string
 
 	headers http.Header
 }
@@ -67,12 +90,16 @@ func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
 }
 
 func (cmd *httpCommand) run(*cobra.Command, []string) error {
+	client, err := cmd.buildClient()
+	if err != nil {
+		return fmt.Errorf("error building client: %w", err)
+	}
+
 	req, err := cmd.buildRequest()
 	if err != nil {
 		return fmt.Errorf("error building request: %w", err)
 	}
 
-	client := &http.Client{Timeout: cmd.Timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("error sending request: %w", err)
@@ -91,6 +118,66 @@ func (cmd *httpCommand) buildRequest() (*http.Request, error) {
 
 	req.Header = cmd.headers
 	return req, nil
+}
+
+func (cmd *httpCommand) buildClient() (*http.Client, error) {
+	rootCertPool, err := cmd.getRootCertPool()
+	if err != nil {
+		return nil, fmt.Errorf("error getting root cert pool: %w", err)
+	}
+
+	certificates, err := cmd.getTLSCertificates()
+	if err != nil {
+		return nil, fmt.Errorf("error loading tls certificates: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		ServerName:         cmd.ServerName,
+		InsecureSkipVerify: cmd.Insecure,
+		RootCAs:            rootCertPool,
+		Certificates:       certificates,
+	}
+
+	client := &http.Client{
+		Timeout: cmd.Timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+	}
+
+	return client, nil
+}
+
+func (cmd *httpCommand) getRootCertPool() (*x509.CertPool, error) {
+	if cmd.RootCertificate == "" {
+		return x509.SystemCertPool()
+	}
+
+	rootPEM, err := os.ReadFile(cmd.RootCertificate)
+	if err != nil {
+		return nil, err
+	}
+
+	pool := x509.NewCertPool()
+	ok := pool.AppendCertsFromPEM(rootPEM)
+	if !ok {
+		return nil, fmt.Errorf("no root certs were successfully parsed from %q", cmd.RootCertificate)
+	}
+
+	return pool, nil
+}
+
+func (cmd *httpCommand) getTLSCertificates() ([]tls.Certificate, error) {
+	if cmd.ClientCertificate == "" || cmd.ClientKey == "" {
+		return nil, nil
+	}
+
+	cert, err := tls.LoadX509KeyPair(cmd.ClientCertificate, cmd.ClientKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return []tls.Certificate{cert}, nil
 }
 
 func (cmd *httpCommand) validateURL() error {
