@@ -1,18 +1,56 @@
-package command
+package cmd
 
 import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
-type HTTPTrace struct {
-	URL string `arg:"" name:"url" help:"the URL to send a request to"`
+func NewHTTPTraceCommand() *cobra.Command {
+	cmd := &httpTraceCommand{}
+
+	return &cobra.Command{
+		Use:     "httptrace url",
+		Short:   "Trace an HTTP GET request",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: cmd.validate,
+		RunE:    cmd.run,
+	}
 }
 
-func (cmd *HTTPTrace) Run() error {
+type httpTraceCommand struct {
+	URL string
+}
+
+func (cmd *httpTraceCommand) validate(_ *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("expected 1 argument but recieved %d", len(args))
+	}
+
+	cmd.URL = args[0]
+	parsedURL, err := url.Parse(cmd.URL)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	switch parsedURL.Scheme {
+	case "http", "https":
+		break
+	case "":
+		return fmt.Errorf("the provided url does not include a scheme (http/https): %s", cmd.URL)
+	default:
+		return fmt.Errorf("the provided url does not include a supported scheme (http/https): %s", cmd.URL)
+	}
+
+	return nil
+}
+
+func (cmd *httpTraceCommand) run(*cobra.Command, []string) error {
 	start := time.Now()
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(info httptrace.DNSStartInfo) {
