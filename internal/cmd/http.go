@@ -31,6 +31,7 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVarP(&cmd.Method, "method", "m", "GET", "The HTTP method to send the request with")
 	flags.StringSliceVarP(&cmd.Headers, "header", "H", nil, "The header(s) to add to the request")
 	flags.DurationVarP(&cmd.Timeout, "timeout", "t", 0, "The max amount of time the request can take. A value of 0 means no timeout.")
+	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
 	flags.BoolVar(&cmd.Insecure, "insecure", false, "Skip TLS server verification")
 	flags.StringVar(&cmd.ServerName, "server-name", "", "Override the server name used to verify the server's certificate")
 	flags.StringVar(&cmd.RootCertificate, "root-cert", "", "Path to a PEM-encoded CA root certificate to trust")
@@ -51,11 +52,11 @@ func NewHTTPCommand() *cobra.Command {
 }
 
 type httpCommand struct {
-	URL     string
-	Method  string
-	Headers []string
-	Timeout time.Duration
-
+	URL               string
+	Method            string
+	Headers           []string
+	Timeout           time.Duration
+	PrintHeaders      bool
 	Insecure          bool
 	ServerName        string
 	RootCertificate   string
@@ -106,8 +107,19 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 	}
 	defer resp.Body.Close()
 
+	if cmd.PrintHeaders {
+		err = resp.Header.Write(os.Stdout)
+		if err != nil {
+			return fmt.Errorf("failed to write response headers: %w", err)
+		}
+	}
+
 	_, err = io.Copy(os.Stdout, resp.Body)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to write response body: %w", err)
+	}
+
+	return nil
 }
 
 func (cmd *httpCommand) buildRequest() (*http.Request, error) {
