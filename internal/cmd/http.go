@@ -83,7 +83,7 @@ type httpCommand struct {
 
 func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("expected 1 argument but recieved %d", len(args))
+		return fmt.Errorf("expected 1 argument but received %d", len(args))
 	}
 
 	cmd.URL = args[0]

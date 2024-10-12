@@ -26,7 +26,7 @@ type reachableCommand struct {
 
 func (cmd *reachableCommand) validate(_ *cobra.Command, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("expected 1 argument but recieved %d", len(args))
+		return fmt.Errorf("expected 1 argument but received %d", len(args))
 	}
 
 	cmd.Address = args[0]
