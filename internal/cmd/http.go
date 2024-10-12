@@ -48,8 +48,9 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
 	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
 	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
+	flags.StringVarP(&cmd.OutputFile, "output", "o", "", "A file path to output the response body to")
 
-	fileFlags := []string{"data-file", "root-cert", "cert", "key"}
+	fileFlags := []string{"data-file", "root-cert", "cert", "key", "output"}
 	for _, ff := range fileFlags {
 		err := cobraCmd.MarkFlagFilename(ff)
 		if err != nil {
@@ -79,8 +80,9 @@ type httpCommand struct {
 	RootCertificate   string
 	ClientCertificate string
 	ClientKey         string
-	// Debugging/Visibility
+	// Output Options
 	PrintHeaders bool
+	OutputFile   string
 
 	url       *url.URL
 	headers   http.Header
@@ -140,7 +142,7 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 		}
 	}
 
-	_, err = io.Copy(os.Stdout, resp.Body)
+	err = cmd.writeOutput(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to write response body: %w", err)
 	}
@@ -309,4 +311,20 @@ func (cmd *httpCommand) openBody() (io.ReadCloser, error) {
 	default:
 		return http.NoBody, nil
 	}
+}
+
+func (cmd *httpCommand) writeOutput(response io.Reader) error {
+	if cmd.OutputFile == "" {
+		_, err := io.Copy(os.Stdout, response)
+		return err
+	}
+
+	f, err := os.Create(cmd.OutputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer f.Close()
+
+	_, err = io.Copy(f, response)
+	return err
 }
