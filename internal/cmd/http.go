@@ -14,7 +14,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const headerDelimiter = ":"
+const (
+	headerDelimiter   = ":"
+	contentTypeHeader = "Content-Type"
+	// defaultContentType is the content type that will be set when the user included data for a
+	// body, but has not manually set a content type header.
+	defaultContentType = "text/plain"
+)
 
 func NewHTTPCommand() *cobra.Command {
 	cmd := &httpCommand{}
@@ -31,14 +37,16 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVarP(&cmd.Method, "method", "m", "GET", "The HTTP method to send the request with")
 	flags.StringSliceVarP(&cmd.Headers, "header", "H", nil, "The header(s) to add to the request")
 	flags.DurationVarP(&cmd.Timeout, "timeout", "t", 0, "The max amount of time the request can take. A value of 0 means no timeout.")
-	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
+	flags.StringVarP(&cmd.DataRaw, "data", "d", "", "Raw data that should be sent in the body of the request")
+	flags.StringVar(&cmd.DataFile, "data-file", "", "The path to a file (or '-' for stdin) to use as the request body")
 	flags.BoolVar(&cmd.Insecure, "insecure", false, "Skip TLS server verification")
 	flags.StringVar(&cmd.ServerName, "server-name", "", "Override the server name used to verify the server's certificate")
 	flags.StringVar(&cmd.RootCertificate, "root-cert", "", "Path to a PEM-encoded CA root certificate to trust")
 	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
 	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
+	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
 
-	fileFlags := []string{"root-cert", "cert", "key"}
+	fileFlags := []string{"data-file", "root-cert", "cert", "key"}
 	for _, ff := range fileFlags {
 		err := cobraCmd.MarkFlagFilename(ff)
 		if err != nil {
@@ -46,22 +54,29 @@ func NewHTTPCommand() *cobra.Command {
 			panic(fmt.Sprintf("Failed to mark flag %q as a filename", ff))
 		}
 	}
+
 	cobraCmd.MarkFlagsRequiredTogether("cert", "key")
+	cobraCmd.MarkFlagsMutuallyExclusive("data", "data-file")
 
 	return cobraCmd
 }
 
 type httpCommand struct {
-	URL               string
-	Method            string
-	Headers           []string
-	Timeout           time.Duration
-	PrintHeaders      bool
+	// Request Options
+	URL      string
+	Method   string
+	Headers  []string
+	Timeout  time.Duration
+	DataRaw  string
+	DataFile string
+	// TLS Options
 	Insecure          bool
 	ServerName        string
 	RootCertificate   string
 	ClientCertificate string
 	ClientKey         string
+	// Debugging/Visibility
+	PrintHeaders bool
 
 	headers http.Header
 }
@@ -96,7 +111,13 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 		return fmt.Errorf("error building client: %w", err)
 	}
 
-	req, err := cmd.buildRequest()
+	body, err := cmd.openBody()
+	if err != nil {
+		return fmt.Errorf("error opening body: %w", err)
+	}
+	defer body.Close()
+
+	req, err := cmd.buildRequest(body)
 	if err != nil {
 		return fmt.Errorf("error building request: %w", err)
 	}
@@ -122,8 +143,8 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 	return nil
 }
 
-func (cmd *httpCommand) buildRequest() (*http.Request, error) {
-	req, err := http.NewRequest(cmd.Method, cmd.URL, http.NoBody)
+func (cmd *httpCommand) buildRequest(body io.ReadCloser) (*http.Request, error) {
+	req, err := http.NewRequest(cmd.Method, cmd.URL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -235,5 +256,30 @@ func (cmd *httpCommand) parseHeaders() error {
 		}
 		cmd.headers.Add(parts[0], strings.TrimSpace(parts[1]))
 	}
+
+	// If the request is going to have a body, but the user did not explicitly set a content type,
+	// then include a default content type to prevent issues with servers that expect it. A more
+	// accurate type can be included by the user using the --header/-H flag.
+	if cmd.hasBody() && cmd.headers.Get(contentTypeHeader) == "" {
+		cmd.headers.Set(contentTypeHeader, defaultContentType)
+	}
+
 	return nil
+}
+
+func (cmd *httpCommand) hasBody() bool {
+	return cmd.DataRaw != "" || cmd.DataFile != ""
+}
+
+func (cmd *httpCommand) openBody() (io.ReadCloser, error) {
+	switch {
+	case cmd.DataRaw != "":
+		return io.NopCloser(strings.NewReader(cmd.DataRaw)), nil
+	case cmd.DataFile == "-":
+		return os.Stdin, nil
+	case cmd.DataFile != "":
+		return os.Open(cmd.DataFile)
+	default:
+		return http.NoBody, nil
+	}
 }
