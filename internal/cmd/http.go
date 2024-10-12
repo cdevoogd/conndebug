@@ -47,6 +47,7 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVar(&cmd.RootCertificate, "root-cert", "", "Path to a PEM-encoded CA root certificate to trust")
 	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
 	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
+	flags.BoolVar(&cmd.PrintStatus, "print-status", false, "Print out the response status")
 	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
 	flags.StringVarP(&cmd.OutputFile, "output", "o", "", "A file path to output the response body to")
 
@@ -81,12 +82,17 @@ type httpCommand struct {
 	ClientCertificate string
 	ClientKey         string
 	// Output Options
+	PrintStatus  bool
 	PrintHeaders bool
 	OutputFile   string
 
 	url       *url.URL
 	headers   http.Header
 	cookieJar *cookiejar.Jar
+}
+
+func (cmd *httpCommand) log(a ...string) {
+	fmt.Fprintln(os.Stderr, a)
 }
 
 func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
@@ -135,8 +141,12 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 	}
 	defer resp.Body.Close()
 
+	if cmd.PrintStatus {
+		cmd.log(resp.Status)
+	}
+
 	if cmd.PrintHeaders {
-		err = resp.Header.Write(os.Stdout)
+		err = resp.Header.Write(os.Stderr)
 		if err != nil {
 			return fmt.Errorf("failed to write response headers: %w", err)
 		}
