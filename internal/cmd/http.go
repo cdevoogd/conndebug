@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 const (
 	headerDelimiter   = ":"
+	cookieDelimiter   = "="
 	contentTypeHeader = "Content-Type"
 	// defaultContentType is the content type that will be set when the user included data for a
 	// body, but has not manually set a content type header.
@@ -35,7 +37,8 @@ func NewHTTPCommand() *cobra.Command {
 
 	flags := cobraCmd.Flags()
 	flags.StringVarP(&cmd.Method, "method", "m", "GET", "The HTTP method to send the request with")
-	flags.StringSliceVarP(&cmd.Headers, "header", "H", nil, "The header(s) to add to the request")
+	flags.StringSliceVarP(&cmd.Headers, "header", "H", nil, "The header(s) to add to the request (format: 'Header: value')")
+	flags.StringSliceVarP(&cmd.Cookies, "cookie", "c", nil, "The cookie(s) to add to the request (format: 'key=value')")
 	flags.DurationVarP(&cmd.Timeout, "timeout", "t", 0, "The max amount of time the request can take. A value of 0 means no timeout.")
 	flags.StringVarP(&cmd.DataRaw, "data", "d", "", "Raw data that should be sent in the body of the request")
 	flags.StringVar(&cmd.DataFile, "data-file", "", "The path to a file (or '-' for stdin) to use as the request body")
@@ -66,6 +69,7 @@ type httpCommand struct {
 	URL      string
 	Method   string
 	Headers  []string
+	Cookies  []string
 	Timeout  time.Duration
 	DataRaw  string
 	DataFile string
@@ -78,28 +82,29 @@ type httpCommand struct {
 	// Debugging/Visibility
 	PrintHeaders bool
 
-	headers http.Header
+	url       *url.URL
+	headers   http.Header
+	cookieJar *cookiejar.Jar
 }
 
 func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("expected 1 argument but received %d", len(args))
 	}
-
 	cmd.URL = args[0]
-	err := cmd.validateURL()
-	if err != nil {
-		return err
+
+	helpers := []func() error{
+		cmd.parseURL,
+		cmd.validateMethod,
+		cmd.parseHeaders,
+		cmd.parseCookies,
 	}
 
-	err = cmd.validateMethod()
-	if err != nil {
-		return err
-	}
-
-	err = cmd.parseHeaders()
-	if err != nil {
-		return err
+	for _, helper := range helpers {
+		err := helper()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -144,7 +149,7 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 }
 
 func (cmd *httpCommand) buildRequest(body io.ReadCloser) (*http.Request, error) {
-	req, err := http.NewRequest(cmd.Method, cmd.URL, body)
+	req, err := http.NewRequest(cmd.Method, cmd.url.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +178,7 @@ func (cmd *httpCommand) buildClient() (*http.Client, error) {
 
 	client := &http.Client{
 		Timeout: cmd.Timeout,
+		Jar:     cmd.cookieJar,
 		Transport: &http.Transport{
 			TLSClientConfig: tlsConfig,
 		},
@@ -213,7 +219,7 @@ func (cmd *httpCommand) getTLSCertificates() ([]tls.Certificate, error) {
 	return []tls.Certificate{cert}, nil
 }
 
-func (cmd *httpCommand) validateURL() error {
+func (cmd *httpCommand) parseURL() error {
 	parsedURL, err := url.Parse(cmd.URL)
 	if err != nil {
 		return fmt.Errorf("failed to parse URL: %w", err)
@@ -228,6 +234,7 @@ func (cmd *httpCommand) validateURL() error {
 		return fmt.Errorf("the provided url does not include a supported scheme (http/https): %s", cmd.URL)
 	}
 
+	cmd.url = parsedURL
 	return nil
 }
 
@@ -264,6 +271,26 @@ func (cmd *httpCommand) parseHeaders() error {
 		cmd.headers.Set(contentTypeHeader, defaultContentType)
 	}
 
+	return nil
+}
+
+func (cmd *httpCommand) parseCookies() error {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return fmt.Errorf("error creating cookie jar: %w", err)
+	}
+
+	allCookies := []*http.Cookie{}
+	for _, cookie := range cmd.Cookies {
+		cookies, err := http.ParseCookie(cookie)
+		if err != nil {
+			return fmt.Errorf("failed to parse cookie input %q: %w", cookie, err)
+		}
+		allCookies = append(allCookies, cookies...)
+	}
+
+	jar.SetCookies(cmd.url, allCookies)
+	cmd.cookieJar = jar
 	return nil
 }
 
