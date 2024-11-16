@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/smallstep/certinfo"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,8 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
 	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
 	flags.BoolVar(&cmd.PrintStatus, "print-status", false, "Print out the response status")
+	flags.BoolVar(&cmd.PrintTLSState, "print-tls", false, "Print out the response TLS information")
+	flags.BoolVar(&cmd.PrintShortCertificates, "short-certs", false, "When printing TLS info, print the short representation of the certificates")
 	flags.BoolVar(&cmd.PrintHeaders, "print-headers", false, "Print out the response headers")
 	flags.StringVarP(&cmd.OutputFile, "output", "o", "", "A file path to output the response body to")
 
@@ -82,17 +85,23 @@ type httpCommand struct {
 	ClientCertificate string
 	ClientKey         string
 	// Output Options
-	PrintStatus  bool
-	PrintHeaders bool
-	OutputFile   string
+	PrintStatus            bool
+	PrintTLSState          bool
+	PrintShortCertificates bool
+	PrintHeaders           bool
+	OutputFile             string
 
 	url       *url.URL
 	headers   http.Header
 	cookieJar *cookiejar.Jar
 }
 
-func (cmd *httpCommand) log(a ...string) {
-	fmt.Fprintln(os.Stderr, a)
+func (cmd *httpCommand) log(a ...any) {
+	fmt.Fprintln(os.Stderr, a...)
+}
+
+func (cmd *httpCommand) logf(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, format, a...)
 }
 
 func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
@@ -140,6 +149,10 @@ func (cmd *httpCommand) run(*cobra.Command, []string) error {
 		return fmt.Errorf("error sending request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if cmd.PrintTLSState {
+		cmd.logTLSState(resp.TLS)
+	}
 
 	if cmd.PrintStatus {
 		cmd.log(resp.Status)
@@ -337,4 +350,30 @@ func (cmd *httpCommand) writeOutput(response io.Reader) error {
 
 	_, err = io.Copy(f, response)
 	return err
+}
+
+func (cmd *httpCommand) logTLSState(state *tls.ConnectionState) {
+	if state == nil {
+		cmd.log("No TLS connection state is available. The request was likely unencrypted (HTTP).")
+		return
+	}
+
+	getCertificateText := certinfo.CertificateText
+	if cmd.PrintShortCertificates {
+		getCertificateText = certinfo.CertificateShortText
+	}
+
+	cmd.log("TLS Version:", tls.VersionName(state.Version))
+	cmd.log("Cipher Suite:", tls.CipherSuiteName(state.CipherSuite))
+	cmd.log("Negotiated Protocol (ALPN):", state.NegotiatedProtocol)
+	cmd.log("Server Name:", state.ServerName)
+	for i, cert := range state.PeerCertificates {
+		cmd.logf("Peer Certificate #%d:\n", i)
+		text, err := getCertificateText(cert)
+		if err != nil {
+			cmd.logf("Failed to parse certificate: %s", err)
+			continue
+		}
+		cmd.log(text)
+	}
 }
