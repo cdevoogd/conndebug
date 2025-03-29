@@ -48,6 +48,7 @@ func NewHTTPCommand() *cobra.Command {
 	flags.StringVar(&cmd.RootCertificate, "root-cert", "", "Path to a PEM-encoded CA root certificate to trust")
 	flags.StringVar(&cmd.ClientCertificate, "cert", "", "Path to a PEM-encoded client certificate to use")
 	flags.StringVar(&cmd.ClientKey, "key", "", "Path to a PEM-encoded private key to use")
+	flags.StringVar(&cmd.TLSMasterSecretsFile, "tls-secret-file", "", "Path to write TLS master secrets to. Used for decrypting TLS in programs like Wireshark.")
 	flags.BoolVar(&cmd.PrintStatus, "print-status", false, "Print out the response status")
 	flags.BoolVar(&cmd.PrintTLSState, "print-tls", false, "Print out the response TLS information")
 	flags.BoolVar(&cmd.PrintShortCertificates, "short-certs", false, "When printing TLS info, print the short representation of the certificates")
@@ -79,11 +80,12 @@ type httpCommand struct {
 	DataRaw  string
 	DataFile string
 	// TLS Options
-	Insecure          bool
-	ServerName        string
-	RootCertificate   string
-	ClientCertificate string
-	ClientKey         string
+	Insecure             bool
+	ServerName           string
+	RootCertificate      string
+	ClientCertificate    string
+	ClientKey            string
+	TLSMasterSecretsFile string
 	// Output Options
 	PrintStatus            bool
 	PrintTLSState          bool
@@ -128,7 +130,17 @@ func (cmd *httpCommand) validate(_ *cobra.Command, args []string) error {
 }
 
 func (cmd *httpCommand) run(*cobra.Command, []string) error {
-	client, err := cmd.buildClient()
+	var keyLogWriter io.Writer = nil
+	if cmd.TLSMasterSecretsFile != "" {
+		f, err := os.OpenFile(cmd.TLSMasterSecretsFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("error opening the TLS master secret file: %w", err)
+		}
+		defer f.Close()
+		keyLogWriter = f
+	}
+
+	client, err := cmd.buildClient(keyLogWriter)
 	if err != nil {
 		return fmt.Errorf("error building client: %w", err)
 	}
@@ -183,7 +195,7 @@ func (cmd *httpCommand) buildRequest(body io.ReadCloser) (*http.Request, error) 
 	return req, nil
 }
 
-func (cmd *httpCommand) buildClient() (*http.Client, error) {
+func (cmd *httpCommand) buildClient(keyLogWriter io.Writer) (*http.Client, error) {
 	rootCertPool, err := cmd.getRootCertPool()
 	if err != nil {
 		return nil, fmt.Errorf("error getting root cert pool: %w", err)
@@ -199,6 +211,7 @@ func (cmd *httpCommand) buildClient() (*http.Client, error) {
 		InsecureSkipVerify: cmd.Insecure,
 		RootCAs:            rootCertPool,
 		Certificates:       certificates,
+		KeyLogWriter:       keyLogWriter,
 	}
 
 	client := &http.Client{
